@@ -33,7 +33,7 @@ const DATA = {"paths": ["M116 -356C149 -382 178 -404 211 -430C242 -454 276 -482 
 // ====================== 可调参数(改这里就够了) ======================
 const CFG = {
   // --- 书写节奏 ---
-  WRITE_SECONDS: 4.6,   // 落笔到收笔的总时长(秒),含所有停顿
+  WRITE_SECONDS: 8.5,   // 落笔到收笔的总时长(秒),含所有停顿
   LOAD_DELAY: 0.4,      // 页面加载后到"提笔"的等待(秒)
   HOVER: 0.3,           // 落笔前悬停(秒):笔尖停在纸面上方再落下
   K0: 900,              // 2/3 幂律的曲率尺度:v ∝ (κ·K0)^(-1/3),弯道慢、直线快
@@ -42,8 +42,8 @@ const CFG = {
   CUSP_WINDOW: 60,      // 判定折返时统计转角的窗口长度(字体单位)
   CUSP_FLOOR: 0.12,     // 折返点的最低速度(相对),接近停住
   CUSP_RAMP: 480,       // 折返前减速、折返后加速各占的弧长(字体单位)
-  CUSP_DWELL: 0.04,     // 一般折返处的停顿(秒)
-  LETTER_DWELL: 0.09,    // 字母交界处的停顿(秒),比一般折返更长
+  CUSP_DWELL: 0.06,     // 一般折返处的停顿(秒)
+  LETTER_DWELL: 0.12,   // 字母交界处的停顿(秒),比一般折返更长
   EDGE_RAMP: 1400,      // 起笔加速、收笔减速所用的弧长(字体单位)
   EDGE_FLOOR: 0.08,     // 起笔/收笔时的最低速度(相对)
   Y_SPEEDUP: 0.03,      // 五个 y 逐个加快的比例(第 k 个 y 快 k×3%),模拟肌肉记忆
@@ -62,7 +62,7 @@ const CFG = {
   RIM: 0.22,            // 环绕一圈的高光边强度
   SHADOW: 0.8,          // 投影不透明度
   SHADOW_DY: 14,        // 投影向下偏移(CSS 像素)
-  SHADOW_BLUR: 150,     // 投影模糊半径(字体单位)
+  SHADOW_BLUR: 110,     // 投影高斯模糊的 σ(字体单位)
   // --- 版式 ---
   MAX_W: 1400,          // 桌面上字的最大宽度(CSS 像素)
   DESK_VW: 0.86,        // 桌面:字宽占视口宽度的比例
@@ -171,91 +171,95 @@ function arcAt(t) {   // 时间 → 已写弧长(字体单位)
   while (hi - lo > 1) { const m = (lo + hi) >> 1; if (TT[m] <= t) lo = m; else hi = m; }
   return SS[lo] + (SS[hi] - SS[lo]) * (t - TT[lo]) / (TT[hi] - TT[lo]);
 }
-// ====================== 2. 预处理:笔画光栅化 → 距离场 → 法线/倒角/到达弧长贴图 ======================
+// ====================== 2. 预处理:到中心线的精确距离场 → 法线 / 倒角进度 / 覆盖率 / 到达弧长贴图 ======================
+// 不做光栅化:对每个贴图像素直接算到笔画中心线(折线 pts)的最近距离,法线和倒角进度因此是连续的,
+// 玻璃高光边不会出现二值栅格带来的串珠纹
 const [bx, by, bw, bh] = DATA.box, U = CFG.U;
 const Wm = Math.ceil(bw / U), Hm = Math.ceil(bh / U), B = DATA.width / 2 / U;   // B:半笔宽(贴图像素)
-const cv = document.createElement("canvas"); cv.width = Wm; cv.height = Hm;
-const cx = cv.getContext("2d", { willReadFrequently: true });
-cx.setTransform(1 / U, 0, 0, 1 / U, -bx / U, -by / U);
-cx.lineCap = cx.lineJoin = "round"; cx.lineWidth = DATA.width; cx.strokeStyle = "#000";
-DATA.paths.forEach(d => cx.stroke(new Path2D(d)));
-const cover = cx.getImageData(0, 0, Wm, Hm).data;   // alpha 通道 = 覆盖率(带抗锯齿)
-// Felzenszwalb 一维距离变换,两遍得到到最近"笔画外"像素的欧氏距离
-function edt1(f, n, d, v, z) {
-  let k = 0; v[0] = 0; z[0] = -1e20; z[1] = 1e20;
-  for (let q = 1; q < n; q++) {
-    let s = ((f[q] + q*q) - (f[v[k]] + v[k]*v[k])) / (2*q - 2*v[k]);
-    while (s <= z[k]) { k--; s = ((f[q] + q*q) - (f[v[k]] + v[k]*v[k])) / (2*q - 2*v[k]); }
-    k++; v[k] = q; z[k] = s; z[k+1] = 1e20;
-  }
-  k = 0;
-  for (let q = 0; q < n; q++) { while (z[k+1] < q) k++; d[q] = (q - v[k]) * (q - v[k]) + f[v[k]]; }
-}
-const dist = new Float32Array(Wm * Hm);
-for (let i = 0; i < dist.length; i++) dist[i] = cover[i*4 + 3] > 127 ? 1e20 : 0;
+const field = new Uint8Array(Wm * Hm * 4);        // R,G = 朝中心线的法线;B = 倒角进度(0 边缘 → 1 中心);A = 覆盖率
+// 到达弧长:半笔宽范围内最早经过的路径弧长。书写到 s 时,ARR ≤ s 的像素显示,等价于"圆头笔画只描前 s 长",笔尖自然是圆头
+const ARR = new Float32Array(Wm * Hm).fill(1e9);
 {
-  const m = Math.max(Wm, Hm), f = new Float32Array(m), d = new Float32Array(m), v = new Int32Array(m), z = new Float32Array(m + 1);
-  for (let x = 0; x < Wm; x++) { for (let y = 0; y < Hm; y++) f[y] = dist[y*Wm + x]; edt1(f, Hm, d, v, z); for (let y = 0; y < Hm; y++) dist[y*Wm + x] = d[y]; }
-  for (let y = 0; y < Hm; y++) { for (let x = 0; x < Wm; x++) f[x] = dist[y*Wm + x]; edt1(f, Wm, d, v, z); for (let x = 0; x < Wm; x++) dist[y*Wm + x] = Math.sqrt(d[x]); }
-}
-// 3×3 均值平滑两遍,压掉二值栅格带来的法线抖动(只用于求法线,倒角进度仍用原始距离)
-let ds = dist;
-for (let pass = 0; pass < 2; pass++) {
-  const src = ds, out = new Float32Array(src.length);
-  for (let y = 0; y < Hm; y++) for (let x = 0; x < Wm; x++) {
-    let s = 0;
-    for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++) s += src[Math.min(Hm-1, Math.max(0, y+j)) * Wm + Math.min(Wm-1, Math.max(0, x+i))];
-    out[y*Wm + x] = s / 9;
-  }
-  ds = out;
-}
-// 到达弧长贴图:每个像素记录"半笔宽范围内最早经过的路径点"的弧长。书写到弧长 s 时,到达弧长 ≤ s 的像素就显示,
-// 这正好等价于"圆头笔画只描前 s 长"(和 SVG stroke-dasharray 的效果一致),笔尖自然是圆头
-function stamp(A, w, h, k, radius) {
-  for (let i = 0; i < N; i++) {
-    const cx0 = (pts[i][0] - bx) / U / k, cy0 = (pts[i][1] - by) / U / k, s = i * DS;
-    for (let y = Math.max(0, Math.floor(cy0 - radius)); y <= Math.min(h - 1, Math.ceil(cy0 + radius)); y++) {
-      const dy = y + .5 - cy0, w2 = radius * radius - dy * dy; if (w2 < 0) continue;
-      const hw = Math.sqrt(w2), xb = Math.min(w - 1, Math.floor(cx0 + hw - .5));
-      for (let x = Math.max(0, Math.ceil(cx0 - hw - .5)), p = y * w + x; x <= xb; x++, p++) if (A[p] > s) A[p] = s;
+  const d2min = new Float32Array(Wm * Hm).fill(1e18), vx = new Float32Array(Wm * Hm), vy = new Float32Array(Wm * Hm);
+  const R = B + 2, Rr = B + 1.5, P = pts.map(q => [(q[0] - bx) / U, (q[1] - by) / U]);
+  for (let i = 0; i + 1 < N; i++) {
+    const ax = P[i][0], ay = P[i][1], ex = P[i+1][0] - ax, ey = P[i+1][1] - ay, L2 = ex*ex + ey*ey || 1e-9;
+    const x0 = Math.max(0, Math.floor(Math.min(ax, ax + ex) - R)), x1 = Math.min(Wm - 1, Math.ceil(Math.max(ax, ax + ex) + R));
+    const y0 = Math.max(0, Math.floor(Math.min(ay, ay + ey) - R)), y1 = Math.min(Hm - 1, Math.ceil(Math.max(ay, ay + ey) + R));
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+      const px = x + .5, py = y + .5, wx = ax - px, wy = ay - py;            // w:像素 → 线段起点
+      let t = -(wx*ex + wy*ey) / L2; t = t < 0 ? 0 : t > 1 ? 1 : t;
+      const dx = wx + ex*t, dy = wy + ey*t, d2 = dx*dx + dy*dy;             // 像素 → 线段上最近点
+      if (d2 > R*R) continue;
+      const p = y*Wm + x;
+      if (d2 < d2min[p]) { d2min[p] = d2; vx[p] = dx; vy[p] = dy; }
+      // 这一段上离像素 ≤ Rr 的最早参数 t(解二次方程 |w + E t|² = Rr²),它的弧长就是候选到达弧长
+      const bq = 2*(wx*ex + wy*ey), cq = wx*wx + wy*wy - Rr*Rr, disc = bq*bq - 4*L2*cq;
+      if (disc >= 0) {
+        const sq = Math.sqrt(disc), tl = (-bq - sq) / (2*L2), th = (-bq + sq) / (2*L2);
+        if (th >= 0 && tl <= 1) { const s = (i + Math.max(0, tl)) * DS; if (s < ARR[p]) ARR[p] = s; }
+      }
     }
   }
+  for (let p = 0; p < Wm*Hm; p++) {
+    const o = p*4, d = Math.sqrt(d2min[p]);
+    field[o] = field[o+1] = 128;
+    if (d > B + 1) continue;
+    field[o+3] = Math.round(255 * Math.min(1, Math.max(0, B - d + .5)));      // 1 像素宽的边缘抗锯齿
+    field[o+2] = Math.round(255 * Math.min(1, Math.max(0, (B - d) / B)));
+    const len = Math.hypot(vx[p], vy[p]);
+    if (len > 1e-6) { field[o] = Math.round(128 + vx[p] / len * 127); field[o+1] = Math.round(128 + vy[p] / len * 127); }
+  }
 }
-const ARR = new Float32Array(Wm * Hm).fill(1e9); stamp(ARR, Wm, Hm, 1, B + 1.5);
-// 投影用的 8 位到达弧长图(弧长 / 总弧长 × 255,精度约 200 字体单位,够投影用);投影在着色器里对"已写部分"做多点采样模糊,
-// 这样还没写到的笔画不会提前投下阴影
-const arr8 = new Uint8Array(Wm * Hm);
-for (let i = 0; i < arr8.length; i++) arr8[i] = Math.min(255, Math.round(ARR[i] / ARC_TOTAL * 255));
-// 字段贴图:R,G = 朝笔画内部的法线;B = 倒角进度(0 边缘 → 1 笔画中心);A = 覆盖率
-const field = new Uint8Array(Wm * Hm * 4);
-for (let y = 0; y < Hm; y++) for (let x = 0; x < Wm; x++) {
-  const i = y*Wm + x, o = i*4;
-  field[o] = field[o+1] = 128; field[o+3] = cover[o+3];
-  if (dist[i] === 0) continue;
-  const gx = ds[y*Wm + Math.min(Wm-1, x+1)] - ds[y*Wm + Math.max(0, x-1)];
-  const gy = ds[Math.min(Hm-1, y+1)*Wm + x] - ds[Math.max(0, y-1)*Wm + x];
-  const len = Math.hypot(gx, gy);
-  field[o+2] = Math.round(255 * Math.min(1, Math.max(0, dist[i] - .5) / B));
-  if (len > 1e-3) { field[o] = Math.round(128 + gx/len*127); field[o+1] = Math.round(128 + gy/len*127); }
-}
-// ====================== 3. WebGL2:背景 + 玻璃在同一个片元着色器里 ======================
+// 投影离屏缓冲:在贴图分辨率的 1/4 上渲染"已写部分的覆盖率",再做两遍可分离高斯模糊;四周留 3σ 的边距免得被裁
+const SH_DOWN = 4, SH_SIGMA_TEX = CFG.SHADOW_BLUR / U, SH_PAD = Math.ceil(3 * SH_SIGMA_TEX);
+const Ws = Math.ceil((Wm + 2 * SH_PAD) / SH_DOWN), Hs = Math.ceil((Hm + 2 * SH_PAD) / SH_DOWN), SH_SIGMA = SH_SIGMA_TEX / SH_DOWN;
+
+// ====================== 3. WebGL2:背景 + 玻璃在同一个片元着色器里;投影另走三个小 pass ======================
 const canvas = document.getElementById("gl");
 const gl = Q.get("gl") === "0" ? null : canvas.getContext("webgl2", { antialias: false, preserveDrawingBuffer: true });
 const VS = `#version 300 es
-in vec2 p; void main() { gl_Position = vec4(p, 0., 1.); }`;
-const FS = `#version 300 es
-precision highp float;
-uniform vec2 uRes; uniform float uT, uArc, uAA, uDisp, uB, uFold, uLift, uSpec, uRim, uShadow, uMix, uSlide;
-uniform vec4 uBox, uSBox; uniform vec2 uShR;   // uShR:投影模糊半径(贴图 uv 单位)
-uniform vec3 uBaseA, uBaseB, uShA, uShB, uPalA[5], uPalB[5];
-uniform sampler2D uField, uArr, uArr8;
-out vec4 o;
-float bil(sampler2D t, vec2 uv) {   // 对浮点贴图手动双线性采样(R32F 不能线性过滤)
+in vec2 p; out vec2 vUv; void main() { vUv = p * .5 + .5; gl_Position = vec4(p, 0., 1.); }`;
+const GLSL_BIL = `float bil(sampler2D t, vec2 uv) {   // 对浮点贴图手动双线性采样(R32F 不能线性过滤)
   ivec2 mx = textureSize(t, 0) - 1; vec2 q = uv * vec2(mx + 1) - .5, f = fract(q); ivec2 i = ivec2(floor(q));
   float a = texelFetch(t, clamp(i, ivec2(0), mx), 0).r, b = texelFetch(t, clamp(i + ivec2(1, 0), ivec2(0), mx), 0).r;
   float c = texelFetch(t, clamp(i + ivec2(0, 1), ivec2(0), mx), 0).r, d = texelFetch(t, clamp(i + ivec2(1, 1), ivec2(0), mx), 0).r;
   return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
-}
+}`;
+// pass 1:已写部分的覆盖率(带边距)
+const FS_MASK = `#version 300 es
+precision highp float;
+uniform sampler2D uField, uArr; uniform float uArc, uAA, uPad; uniform vec2 uTex;
+in vec2 vUv; out vec4 o;
+${GLSL_BIL}
+void main() {
+  vec2 uv = (vUv * (uTex + 2. * uPad) - uPad) / uTex;
+  if (any(lessThan(uv, vec2(0.))) || any(greaterThan(uv, vec2(1.)))) { o = vec4(0.); return; }
+  float reveal = clamp((uArc - bil(uArr, uv)) / uAA + .5, 0., 1.);
+  o = vec4(texture(uField, uv).a * reveal, 0., 0., 1.);
+}`;
+// pass 2/3:一维高斯,横一遍竖一遍
+const SH_TAPS = Math.ceil(SH_SIGMA * 3);
+const FS_BLUR = `#version 300 es
+precision highp float;
+uniform sampler2D uSrc; uniform vec2 uDir;
+in vec2 vUv; out vec4 o;
+void main() {
+  float s = 0., w = 0.;
+  for (int k = -${SH_TAPS}; k <= ${SH_TAPS}; k++) {
+    float g = exp(-float(k * k) / ${(2 * SH_SIGMA * SH_SIGMA).toFixed(3)});
+    s += g * texture(uSrc, vUv + uDir * float(k)).r; w += g;
+  }
+  o = vec4(s / w, 0., 0., 1.);
+}`;
+const FS = `#version 300 es
+precision highp float;
+uniform vec2 uRes; uniform float uT, uArc, uAA, uDisp, uB, uFold, uLift, uSpec, uRim, uShadow, uMix, uSlide;
+uniform vec4 uBox, uShBox;
+uniform vec3 uBaseA, uBaseB, uShA, uShB, uPalA[5], uPalB[5];
+uniform sampler2D uField, uArr, uShadowT;
+in vec2 vUv; out vec4 o;
+${GLSL_BIL}
 // 一套配色的五个色团:中心沿各自的椭圆轨迹缓慢漂移;slide 把整组色团沿对角线推出/推入画面
 vec3 blobs(vec3 c, vec3 pal[5], float asp, vec2 p, float t, float slide, float fadeIn) {
   for (int i = 0; i < 5; i++) {
@@ -282,22 +286,10 @@ vec3 bg(vec2 px) {
 void main() {
   vec2 px = vec2(gl_FragCoord.x, uRes.y - gl_FragCoord.y);
   vec3 col = bg(px);
-  // 投影:对"已写部分的覆盖率"做 16 点泊松盘模糊;颜色随配色切换
-  vec2 suv = (px - uSBox.xy) / uSBox.zw;
-  if (suv.x > -.1 && suv.x < 1.1 && suv.y > -.2 && suv.y < 1.2) {
-    const vec2 taps[16] = vec2[16](vec2(-.94,-.40),vec2(.95,-.20),vec2(-.10,.96),vec2(.34,-.92),vec2(-.69,.50),vec2(.63,.72),vec2(-.42,-.85),vec2(.88,.33),
-      vec2(-.30,.05),vec2(.18,.42),vec2(-.58,-.05),vec2(.48,-.38),vec2(.05,-.55),vec2(-.15,-.25),vec2(.25,.08),vec2(.00,.70));
-    float ang = 6.2832 * fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(.06711056, .00583715))));   // 每像素不同的旋转角
-    mat2 rot = mat2(cos(ang), -sin(ang), sin(ang), cos(ang));
-    float sa = 0., arcN = uArc / ${ARC_TOTAL.toFixed(1)};
-    for (int i = 0; i < 16; i++) {
-      vec2 q = suv + (rot * taps[i]) * uShR;
-      float written = smoothstep(.006, 0., texture(uArr8, q).r - arcN);   // 到达弧长在当前弧长之前才算已写(留约 300 单位的渐变)
-      sa += texture(uField, q).a * written;
-    }
-    sa = smoothstep(0., .7, sa / 16.);
-    col = mix(col, mix(uShA, uShB, uMix), uShadow * sa);
-  }
+  // 投影:采样离屏高斯模糊结果;颜色随配色切换
+  vec2 suv = (px - uShBox.xy) / uShBox.zw;
+  if (all(greaterThan(suv, vec2(0.))) && all(lessThan(suv, vec2(1.))))
+    col = mix(col, mix(uShA, uShB, uMix), uShadow * texture(uShadowT, suv).r);
   vec2 uv = (px - uBox.xy) / uBox.zw;
   if (uv.x > 0. && uv.x < 1. && uv.y > 0. && uv.y < 1.) {
     vec4 f = texture(uField, uv);
@@ -321,32 +313,55 @@ void main() {
 }`;
 const rgb = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16) / 255);
 const sat = c => { const l = .2126*c[0] + .7152*c[1] + .0722*c[2]; return c.map(v => Math.min(1, Math.max(0, l + (v - l) * CFG.SAT))); };
-let prog, uni = {}, glOK = false;
+let prog, progMask, progBlur, uni = {}, uM = {}, uBl = {}, fbo = [], glOK = false;
 if (gl) try {
   const sh = (type, src) => { const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
     if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s)); return s; };
-  prog = gl.createProgram(); gl.attachShader(prog, sh(gl.VERTEX_SHADER, VS)); gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, FS));
-  gl.bindAttribLocation(prog, 0, "p"); gl.linkProgram(prog);
-  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
-  gl.useProgram(prog);
+  const mk = (fs, out) => {   // 编译链接一个程序,并把所有 uniform 位置收进 out
+    const p = gl.createProgram(); gl.attachShader(p, sh(gl.VERTEX_SHADER, VS)); gl.attachShader(p, sh(gl.FRAGMENT_SHADER, fs));
+    gl.bindAttribLocation(p, 0, "p"); gl.linkProgram(p);
+    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+    const n = gl.getProgramParameter(p, gl.ACTIVE_UNIFORMS);
+    for (let i = 0; i < n; i++) { const nm = gl.getActiveUniform(p, i).name.replace(/\[0\]$/, ""); out[nm] = gl.getUniformLocation(p, nm); }
+    return p;
+  };
+  prog = mk(FS, uni); progMask = mk(FS_MASK, uM); progBlur = mk(FS_BLUR, uBl);
   gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer()); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
   gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
   const tex = (unit, ifmt, fmt, type, w, h, data, filter) => {
-    gl.activeTexture(gl.TEXTURE0 + unit); gl.bindTexture(gl.TEXTURE_2D, gl.createTexture());
+    gl.activeTexture(gl.TEXTURE0 + unit); const t = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, t);
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1); gl.texImage2D(gl.TEXTURE_2D, 0, ifmt, w, h, 0, fmt, type, data);
     for (const [k, v] of [[gl.TEXTURE_MIN_FILTER, filter], [gl.TEXTURE_MAG_FILTER, filter], [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_2D, k, v);
+    return t;
   };
   tex(0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, Wm, Hm, field, gl.LINEAR);
-  tex(1, gl.R8, gl.RED, gl.UNSIGNED_BYTE, Wm, Hm, arr8, gl.LINEAR);
-  tex(2, gl.R32F, gl.RED, gl.FLOAT, Wm, Hm, ARR, gl.NEAREST);
-  const nU = gl.getProgramParameter(prog, gl.ACTIVE_UNIFORMS);
-  for (let i = 0; i < nU; i++) { const nm = gl.getActiveUniform(prog, i).name.replace(/\[0\]$/, ""); uni[nm] = gl.getUniformLocation(prog, nm); }
-  gl.uniform1i(uni.uField, 0); gl.uniform1i(uni.uArr8, 1); gl.uniform1i(uni.uArr, 2);
-  gl.uniform2f(uni.uShR, CFG.SHADOW_BLUR / U / Wm, CFG.SHADOW_BLUR / U / Hm);
+  tex(1, gl.R32F, gl.RED, gl.FLOAT, Wm, Hm, ARR, gl.NEAREST);
+  for (const unit of [2, 3]) {   // 两个投影缓冲互为乒乓
+    const t = tex(unit, gl.R8, gl.RED, gl.UNSIGNED_BYTE, Ws, Hs, null, gl.LINEAR), f = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, f); gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, t, 0);
+    if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) throw new Error("投影 FBO 不完整");
+    fbo.push(f);
+  }
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  gl.useProgram(prog);
+  gl.uniform1i(uni.uField, 0); gl.uniform1i(uni.uArr, 1); gl.uniform1i(uni.uShadowT, 2);
   gl.uniform1f(uni.uB, B); gl.uniform1f(uni.uFold, CFG.FOLD); gl.uniform1f(uni.uLift, CFG.LIFT);
   gl.uniform1f(uni.uSpec, CFG.SPEC); gl.uniform1f(uni.uRim, CFG.RIM); gl.uniform1f(uni.uShadow, CFG.SHADOW);
+  gl.useProgram(progMask);
+  gl.uniform1i(uM.uField, 0); gl.uniform1i(uM.uArr, 1); gl.uniform1f(uM.uPad, SH_PAD); gl.uniform2f(uM.uTex, Wm, Hm);
+  gl.useProgram(prog);
   glOK = true;
 } catch (e) { console.warn("WebGL2 初始化失败,改用降级版:", e.message); }
+// 画一帧:投影三个 pass → 主画面
+function render(arc) {
+  gl.viewport(0, 0, Ws, Hs);
+  gl.useProgram(progMask); gl.bindFramebuffer(gl.FRAMEBUFFER, fbo[0]); gl.uniform1f(uM.uArc, arc); gl.drawArrays(gl.TRIANGLES, 0, 3);
+  gl.useProgram(progBlur);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, fbo[1]); gl.uniform1i(uBl.uSrc, 2); gl.uniform2f(uBl.uDir, 1 / Ws, 0); gl.drawArrays(gl.TRIANGLES, 0, 3);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, fbo[0]); gl.uniform1i(uBl.uSrc, 3); gl.uniform2f(uBl.uDir, 0, 1 / Hs); gl.drawArrays(gl.TRIANGLES, 0, 3);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.viewport(0, 0, canvas.width, canvas.height);
+  gl.useProgram(prog); gl.uniform1f(uni.uArc, arc); gl.drawArrays(gl.TRIANGLES, 0, 3);
+}
 
 // ====================== 4. 布局 ======================
 let dpr = 1, boxW = 0, boxH = 0, boxX = 0, boxY = 0;
@@ -357,11 +372,14 @@ function layout() {
   const s = boxW / bw; boxH = bh * s; boxX = (vw - boxW) / 2; boxY = (vh - boxH) / 2;
   if (!glOK) return;
   canvas.width = Math.round(vw * dpr); canvas.height = Math.round(vh * dpr); gl.viewport(0, 0, canvas.width, canvas.height);
+  gl.useProgram(prog);
   gl.uniform2f(uni.uRes, canvas.width, canvas.height);
   gl.uniform4f(uni.uBox, boxX * dpr, boxY * dpr, boxW * dpr, boxH * dpr);
-  gl.uniform4f(uni.uSBox, boxX * dpr, (boxY + CFG.SHADOW_DY) * dpr, boxW * dpr, boxH * dpr);
+  const tp = boxW * dpr / Wm, aa = Math.max(1, Wm / (boxW * dpr)) * 1.5 * U;   // tp:一个贴图像素对应多少画布像素;aa:显露边缘抗锯齿宽度(字体单位)
+  gl.uniform4f(uni.uShBox, boxX * dpr - SH_PAD * tp, (boxY + CFG.SHADOW_DY) * dpr - SH_PAD * tp, (Wm + 2 * SH_PAD) * tp, (Hm + 2 * SH_PAD) * tp);
   gl.uniform1f(uni.uDisp, U * s * dpr * CFG.REFRACT);
-  gl.uniform1f(uni.uAA, Math.max(1, Wm / (boxW * dpr)) * 1.5 * U);   // 显露边缘的抗锯齿宽度(字体单位)
+  gl.uniform1f(uni.uAA, aa);
+  gl.useProgram(progMask); gl.uniform1f(uM.uAA, aa); gl.useProgram(prog);
 }
 
 // ====================== 5. 配色切换:字写完后按 THEME_HOLD / THEME_FADE 循环;用绝对时间,标签页在后台也照常计时 ======================
@@ -373,6 +391,7 @@ function themeState(sinceDone) {   // 返回 { a, b, slide }:当前在 a → b �
 }
 function applyTheme(st) {
   const A = THEMES[st.a], Bt = THEMES[st.b];
+  gl.useProgram(prog);
   gl.uniform3fv(uni.uPalA, A.blobs.flatMap(h => sat(rgb(h)))); gl.uniform3fv(uni.uPalB, Bt.blobs.flatMap(h => sat(rgb(h))));
   gl.uniform3fv(uni.uBaseA, rgb(A.base)); gl.uniform3fv(uni.uBaseB, rgb(Bt.base));
   gl.uniform3fv(uni.uShA, rgb(A.shadow)); gl.uniform3fv(uni.uShB, rgb(Bt.shadow));
@@ -420,9 +439,8 @@ function frame(now) {
   const sinceDone = TH_PREVIEW !== null ? TH_PREVIEW : REDUCED ? 0 : tw - WRITE_TOTAL;
   if (glOK) {
     gl.uniform1f(uni.uT, REDUCED ? 3 : el * CFG.BG_SPEED);
-    gl.uniform1f(uni.uArc, arc);
     applyTheme(themeState(sinceDone));
-    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    render(arc);
   } else drawFallback(arc);
   const stillMoving = T_FREEZE === null && (!REDUCED || tw < WRITE_TOTAL);
   if (stillMoving || (glOK && !REDUCED)) requestAnimationFrame(frame);   // 背景一直流动;减弱动态时写完就停
