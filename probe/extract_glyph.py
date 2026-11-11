@@ -1,7 +1,9 @@
 """Extract stroke centerlines of one glyph from MacintoshSkeletalVariable.otf (same method as test-animation/build.py).
 
-usage: /Users/mac/Desktop/site/probe/.venv/bin/python -I probe/extract_glyph.py questionmark
+usage: /Users/mac/Desktop/site/probe/.venv/bin/python -I probe/extract_glyph.py questionmark [KEEP]
 Output JSON: {"glyph", "paths": [svg d...], "advance", "width"}; font units, y flipped for SVG, contour order kept.
+KEEP: keep only the first KEEP cubic segments of the first stroke. The cursive glyphs end in an exit stroke
+meant to join the next letter; questionmark uses 55 to drop the tail that curls up to the right.
 """
 import sys, json, math
 from fontTools.ttLib import TTFont
@@ -47,6 +49,9 @@ strokes = []
 for a, b in zip(contours(GLYPH, 100), contours(GLYPH, 500)):
     sk = [(p[0] + (q[0] - p[0]) * T0, p[1] + (q[1] - p[1]) * T0) for p, q in zip(a, b)]
     strokes.append(centerline(sk))
+
+if len(sys.argv) > 2:
+    strokes[0] = strokes[0][:int(sys.argv[2]) * 3 + 1]
 
 def d(s):
     r = lambda p: f"{p[0]:.0f} {-p[1]:.0f}"
