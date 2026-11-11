@@ -1,9 +1,10 @@
 """Extract stroke centerlines of one glyph from MacintoshSkeletalVariable.otf (same method as test-animation/build.py).
 
-usage: /Users/mac/Desktop/site/probe/.venv/bin/python -I probe/extract_glyph.py questionmark [KEEP]
+usage: /Users/mac/Desktop/site/probe/.venv/bin/python -I probe/extract_glyph.py questionmark [KEEP [END_Y]]
 Output JSON: {"glyph", "paths": [svg d...], "advance", "width"}; font units, y flipped for SVG, contour order kept.
-KEEP: keep only the first KEEP cubic segments of the first stroke. The cursive glyphs end in an exit stroke
-meant to join the next letter; questionmark uses 55 to drop the tail that curls up to the right.
+KEEP: keep only the first KEEP cubic segments of the first stroke; END_Y: then extend it straight along its end
+tangent down to y = END_Y (font units, y up). The cursive glyphs end in an exit stroke meant to join the next
+letter; questionmark uses `46 700`: cut where the stem points straight down, so no foot curls off to the right.
 """
 import sys, json, math
 from fontTools.ttLib import TTFont
@@ -51,7 +52,13 @@ for a, b in zip(contours(GLYPH, 100), contours(GLYPH, 500)):
     strokes.append(centerline(sk))
 
 if len(sys.argv) > 2:
-    strokes[0] = strokes[0][:int(sys.argv[2]) * 3 + 1]
+    s = strokes[0][:int(sys.argv[2]) * 3 + 1]
+    if len(sys.argv) > 3:
+        e, c = s[-1], s[-2] if math.dist(s[-1], s[-2]) >= 1 else s[-3]
+        ux, uy = (e[0] - c[0]) / math.dist(e, c), (e[1] - c[1]) / math.dist(e, c)
+        L = (float(sys.argv[3]) - e[1]) / uy
+        if L > 1: s = s + [(e[0] + ux * L * k / 3, e[1] + uy * L * k / 3) for k in (1, 2, 3)]
+    strokes[0] = s
 
 def d(s):
     r = lambda p: f"{p[0]:.0f} {-p[1]:.0f}"
