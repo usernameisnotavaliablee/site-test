@@ -36,33 +36,15 @@ const QDATA = {"hook":"M515 -1563C542 -1712 658 -1828 807 -1855C957 -1881 1106 -
 // ====================== 可调参数(改这里就够了) ======================
 const CFG = {
   // --- 书写节奏 ---
-  WRITE_SECONDS: 6,     // 落笔到收笔的总时长(秒),含所有停顿
-  LOAD_DELAY: 0.4,      // 页面加载后到开场开始的等待(秒)
-  HOVER: 0.3,           // 开场前悬停(秒):笔尖停在纸面上方再落下
-  K0: 900,              // 2/3 幂律的曲率尺度:v ∝ (κ·K0)^(-1/3),弯道慢、直线快
-  V_CAP: 1.6,           // 直线段的最高速度(相对基准速度的倍数)
-  CUSP_ANGLE: 100,      // 在 CUSP_WINDOW 范围内转过这么多度就算折返/尖点(度)
-  CUSP_WINDOW: 60,      // 判定折返时统计转角的窗口长度(字体单位)
-  CUSP_FLOOR: 0.12,     // 折返点的最低速度(相对),接近停住
-  CUSP_RAMP: 480,       // 折返前减速、折返后加速各占的弧长(字体单位)
-  CUSP_DWELL: 0.06,     // 一般折返处的停顿(秒)
-  LETTER_DWELL: 0.12,   // 字母交界处的停顿(秒),比一般折返更长
-  EDGE_RAMP: 1400,      // 起笔加速、收笔减速所用的弧长(字体单位)
-  EDGE_FLOOR: 0.08,     // 起笔/收笔时的最低速度(相对)
-  Y_FAST: 0.65,         // y 连写段基准笔速倍数;因为这段不停顿、不在弯道减速,0.65 时 y 的平均笔速约为 h 的 1.4 倍
-  Y_EVEN: 0.75,         // y 连写段速度拉平的程度:0 = 和 h、z 一样弯道慢直线快,1 = 完全匀速
+  WRITE_SECONDS: 6,     // 正文总时长(秒);整段连续书写,字母交界和折返不插入停顿
+  WRITE_ENTRY: 0.6,     // 正文起笔速度 / 平均速度;滑行末速与它相同,最终收笔速度为 0
+  LOAD_DELAY: 0,        // 开场延迟(秒);0 = 准备好即开始
+  STROKE_SCALE: 1,      // 统一笔宽倍率:问号、圆点、移动笔触、正文共用;建议 0.8–1.2
   // --- 开场:写出问号 → 问号流进圆点汇成玻璃珠 → 玻璃珠滑到 h 的起笔点,接着写 hzyyyyy ---
   Q_WRITE: 1.5,         // 问号钩笔的书写时长(秒)
-  Q_EDGE_RAMP: 420,     // 问号起笔加速、收笔减速所用的弧长(字体单位)
-  Q_LIFT: 0.22,         // 写完钩笔后提笔、移到圆点上方的停顿(秒)
-  Q_DOT: 0.28,          // 点下圆点(秒)
-  Q_HOLD: 0.4,          // 问号写完后的停留(秒)
-  Q_MORPH: 1.1,         // 问号顺着自己的笔画流进圆点、汇成玻璃珠(秒)
-  Q_BREATH: 0.3,        // 玻璃珠汇成后的回弹(秒)
-  Q_TRAVEL: 1.35,       // 玻璃珠滑到 h 起笔点(秒),落点时的速度与正文起笔速度一致
-  Q_BEAD: 1.9,          // 玻璃珠半径(半笔宽的倍数);滑行途中收回到半笔宽,变成笔尖
-  Q_WOBBLE: 0.06,       // 玻璃珠汇成时的回弹幅度
-  Q_STRETCH: 0.18,      // 滑行时沿运动方向的拉伸(速度最快时),等面积
+  Q_DOT: 0.22,          // 圆点淡入时长(秒),与钩笔末段重叠;直径始终等于笔宽
+  Q_MORPH: 0.85,        // 问号连续流入圆点(秒),结束即滑行
+  Q_TRAVEL: 0.9,        // 滑到 h 起笔点的时长(秒),越小越快;建议 0.6–1.2
   Q_MERGE: 0.6,         // 笔画与玻璃珠相融的半径(半笔宽的倍数),越大液桥越粗
   // --- 背景 ---
   SAT: 1.35,            // 莫兰迪配色的饱和度倍数(1 = 原色值)
@@ -73,12 +55,13 @@ const CFG = {
   // --- 玻璃 ---
   U: 4,                 // 预处理贴图分辨率:1 像素 = U 字体单位(越小越细,预处理越慢)
   IOR: 1.5,             // 折射率(空气 = 1)
-  REFRACT: 1.2,         // 折射强度
+  REFRACT: 1.4,         // 折射位移强度,越大背景扭曲越明显;原值 1.2
+  DISPERSION: 0.2,      // 红/蓝通道折射偏移差,越大彩边越明显;原值 0.15,建议 0.1–0.3
   LIFT: 0.14,           // 字面提亮(掺白比例)
   SPEC: 0.9,            // 定向高光强度(光源在左上)
   RIM: 0.22,            // 环绕一圈的高光边强度
   SHADOW: 0.8,          // 投影不透明度
-  SHADOW_DY: 14,        // 投影向下偏移(CSS 像素)
+  SHADOW_DY: 14,        // 字宽达到 MAX_W 时的投影下移量(CSS 像素),随文字等比缩放
   SHADOW_BLUR: 110,     // 投影高斯模糊的 σ(字体单位)
   // --- 版式 ---
   MAX_W: 1400,          // 桌面上字的最大宽度(CSS 像素)
@@ -98,7 +81,7 @@ const LETTER_OF_PATH = [0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4, 5, 5, 5, 6,
 const Q = new URLSearchParams(location.search);
 const REDUCED = matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-// ====================== 1. 几何与时间表:路径展平成等距折线,按曲率算出"像人写字"的时间表 ======================
+// ====================== 1. 几何与时间表:等距折线 + 二次速度曲线,连续推进弧长 ======================
 const DS = 10;   // 采样间距(字体单位)
 const sm = x => x * x * (3 - 2 * x), lerp = (a, b, t) => a + (b - a) * t;
 const bez = (a, b, c, d, t) => { const u = 1 - t; return [0, 1].map(i => u*u*u*a[i] + 3*u*u*t*b[i] + 3*u*t*t*c[i] + t*t*t*d[i]); };
@@ -135,74 +118,23 @@ function polyline(paths, letterOfPath) {
   });
   return { pts, letter, pathStart, pathLen, arc: arcLast + acc, end };   // end:最后一个点(未必落在采样点上)
 }
-// 按折线算书写时间表,返回 { arcAt: 时间 → 已写弧长, total, cusps };总时长(含停顿)精确缩放到 seconds,edgeRamp 是起笔加速/收笔减速的弧长
-// flowFrom:从第几个字母起一气连写(之后不停顿、不在折返处刻意减速、速度拉平),默认不启用
-function schedule(pts, letter, arcTotal, seconds, edgeRamp = CFG.EDGE_RAMP, flowFrom = Infinity) {
-  const N = pts.length;
-  // 每步的转角(弧度);曲率 = 转角 / DS
-  const ang = new Float32Array(N), turn = new Float32Array(N);
-  for (let i = 1; i < N; i++) ang[i] = Math.atan2(pts[i][1] - pts[i-1][1], pts[i][0] - pts[i-1][0]);
-  const wrap = a => Math.abs(((a + 3 * Math.PI) % (2 * Math.PI)) - Math.PI);
-  for (let i = 2; i < N; i++) turn[i] = wrap(ang[i] - ang[i-1]);
-  // (a) 2/3 幂律:弯道慢、直线快,这是手写速度最基本的规律
-  const base = new Float32Array(N);
-  for (let i = 0; i < N; i++) {
-    const kappa = (turn[Math.max(0, i-1)] + turn[i] + turn[Math.min(N-1, i+1)]) / 3 / DS + 1 / CFG.K0;
-    base[i] = Math.min(CFG.V_CAP, Math.pow(kappa * CFG.K0, -1/3));
-  }
-  for (let i = 0; i < N; i++) if (letter[i] >= flowFrom) base[i] = lerp(base[i], 1, CFG.Y_EVEN);
-  // (b) 折返/尖点:窗口内转角超过阈值的局部极大点。笔到这里几乎停住,再短顿一下
-  const HW = Math.round(CFG.CUSP_WINDOW / DS / 2), win = new Float32Array(N);
-  for (let i = 0; i < N; i++) { let s = 0; for (let j = Math.max(2, i - HW); j <= Math.min(N-1, i + HW); j++) s += turn[j]; win[i] = s; }
-  const THR = CFG.CUSP_ANGLE * Math.PI / 180, cusps = [];
-  for (let i = 1; i < N - 1; i++) if (win[i] >= THR && win[i] >= win[i-1] && win[i] > win[i+1]) {
-    const last = cusps[cusps.length - 1];
-    if (last && i - last.i <= 2 * HW) { if (win[i] > win[last.i]) last.i = i; } else cusps.push({ i, letter: false });
-  }
-  // (c) 字母交界:落在交界附近的折返算"换字母",停顿更长;附近没有折返就补一个
-  for (let i = 1; i < N; i++) if (letter[i] !== letter[i-1]) {
-    const near = cusps.find(c => Math.abs(c.i - i) <= HW);
-    if (near) near.letter = true; else cusps.push({ i, letter: true });
-  }
-  cusps.sort((a, b) => a.i - b.i);
-  // 连写段里的折返既不停顿也不额外减速;进入连写段的那个交界照常停顿
-  const flowStart = letter.findIndex(l => l >= flowFrom);
-  const stops = cusps.filter(c => flowStart < 0 || c.i <= flowStart + HW);
-  // (d) 速度包络:折返前后钟形减速/加速,起笔加速、收笔减速
-  const env = new Float32Array(N).fill(1), R = Math.ceil(CFG.CUSP_RAMP / DS);
-  for (const c of stops) for (let i = Math.max(0, c.i - R); i <= Math.min(N-1, c.i + R); i++) {
-    const x = Math.min(1, Math.abs(i - c.i) * DS / CFG.CUSP_RAMP);
-    env[i] = Math.min(env[i], CFG.CUSP_FLOOR + (1 - CFG.CUSP_FLOOR) * sm(x));
-  }
-  for (let i = 0; i < N; i++) {
-    const x = Math.min(1, Math.min(i, N - 1 - i) * DS / edgeRamp);
-    env[i] = Math.min(env[i], CFG.EDGE_FLOOR + (1 - CFG.EDGE_FLOOR) * sm(x));
-  }
-  // (e) 连写段整体更快;然后把总时长(含停顿)精确缩放到 seconds
-  const mult = i => letter[i] >= flowFrom ? CFG.Y_FAST : 1;
-  const dwellAt = new Float32Array(N); let dwellSum = 0;
-  stops.forEach(c => { dwellAt[c.i] = c.letter ? CFG.LETTER_DWELL : CFG.CUSP_DWELL; dwellSum += dwellAt[c.i]; });
-  let cost = 0; for (let i = 1; i < N; i++) cost += DS / (base[i] * env[i] * mult(i));
-  const V = cost / (seconds - dwellSum);   // 基准速度(字体单位/秒)
-  // 时间表:TT[j] 时刻写到弧长 SS[j];停顿表现为两个弧长相同、时间不同的点
-  const TT = [0], SS = [0]; let tAcc = 0;
-  for (let i = 1; i < N; i++) {
-    tAcc += DS / (base[i] * env[i] * mult(i)) / V; TT.push(tAcc); SS.push(i * DS);
-    if (dwellAt[i]) { tAcc += dwellAt[i]; TT.push(tAcc); SS.push(i * DS); }
-  }
-  TT.push(tAcc + 1e-3); SS.push(arcTotal);
-  const total = tAcc;
-  function arcAt(t) {
-    if (t <= 0) return 0; if (t >= total) return arcTotal;
-    let lo = 0, hi = TT.length - 1;
-    while (hi - lo > 1) { const m = (lo + hi) >> 1; if (TT[m] <= t) lo = m; else hi = m; }
-    return SS[lo] + (SS[hi] - SS[lo]) * (t - TT[lo]) / (TT[hi] - TT[lo]);
-  }
-  return { arcAt, total, cusps: stops };
+// v(t) 是二次多项式,积分得到三次位移;按弧长走,路径曲率和字母交界不会制造停顿。
+// startSpeed/endSpeed 为字体单位/秒;当前各段的端点速度保证内部速度为正。
+function schedule(distance, seconds, startSpeed = 0, endSpeed = 0) {
+  const c = startSpeed * seconds;
+  const b = 3 * distance - (2 * startSpeed + endSpeed) * seconds;
+  const a = -2 * distance + (startSpeed + endSpeed) * seconds;
+  const unit = t => Math.min(1, Math.max(0, t / seconds));
+  return {
+    total: seconds,
+    arcAt(t) { const u = unit(t); return t >= seconds ? distance : ((a * u + b) * u + c) * u; },
+    speedAt(t) { const u = unit(t); return (3 * a * u * u + 2 * b * u + c) / seconds; },
+  };
 }
 const NPL = polyline(DATA.paths, LETTER_OF_PATH);
 const { pts, letter, pathStart, pathLen, arc: ARC_TOTAL } = NPL, N = pts.length;
-const { arcAt, total: WRITE_TOTAL, cusps } = schedule(pts, letter, ARC_TOTAL, CFG.WRITE_SECONDS, CFG.EDGE_RAMP, 2);   // 从第一个 y 起连写
+const nameMotion = schedule(ARC_TOTAL, CFG.WRITE_SECONDS, CFG.WRITE_ENTRY * ARC_TOTAL / CFG.WRITE_SECONDS);
+const { arcAt, total: WRITE_TOTAL } = nameMotion;
 function posAt(P, s) {   // 折线 P 上弧长 s 处的点
   const n = P.pts.length, f = Math.max(0, s) / DS, i = Math.floor(f);
   if (i >= n - 1) {
@@ -215,8 +147,7 @@ function posAt(P, s) {   // 折线 P 上弧长 s 处的点
 
 // ====================== 1b. 开场:问号几何、玻璃珠的滑行路径、时间线 ======================
 // 问号与正文同一比例、同一笔宽,摆在视口正中;字的外框本身居中,所以视口中心在字体坐标里是固定点
-const [bx, by, bw, bh] = DATA.box, R_PEN = DATA.width / 2;
-const mj = x => x * x * x * (10 + x * (6 * x - 15));   // 最小加加速度曲线:人手伸向目标时的位移剖面
+const [bx, by, bw, bh] = DATA.box, R_PEN = DATA.width * CFG.STROKE_SCALE / 2;
 const HF = flatten(QDATA.hook), E = HF[HF.length - 1], Ep = HF[Math.max(0, HF.length - 25)], Dg = QDATA.dot;
 // 桥:从钩笔末端顺着笔势接到圆点圆心。书写时不显示,只在问号"流进"圆点时充当通道
 const gap = Math.hypot(Dg[0] - E[0], Dg[1] - E[1]), tEl = Math.hypot(E[0] - Ep[0], E[1] - Ep[1]);
@@ -229,11 +160,11 @@ for (const [x, y] of HF.concat([Dg])) qb = [Math.min(qb[0], x), Math.min(qb[1], 
 const QOFF = [bx + bw / 2 - (qb[0] + qb[2]) / 2, by + bh / 2 - (qb[1] + qb[3]) / 2];
 const QPL = { pts: QG.pts.map(p => [p[0] + QOFF[0], p[1] + QOFF[1]]), end: [QG.end[0] + QOFF[0], QG.end[1] + QOFF[1]], arc: L_ALL };
 const D = [Dg[0] + QOFF[0], Dg[1] + QOFF[1]], QHOOK_END = [E[0] + QOFF[0], E[1] + QOFF[1]];   // 圆点圆心、钩笔末端(字体坐标)    // 圆点圆心(字体坐标)
-const nHook = Math.floor(L_HOOK / DS) + 1;      // 钩笔部分的采样点数(采样点 i 的弧长 = i·DS)
-const qWrite = schedule(QPL.pts.slice(0, nHook), QG.letter.slice(0, nHook), L_HOOK, CFG.Q_WRITE, CFG.Q_EDGE_RAMP);
-const qDrain = schedule(QPL.pts, QG.letter, L_ALL, 1, CFG.Q_EDGE_RAMP);   // 流进圆点时笔画尾端的推进节奏,时长归一化为 1
+const qWrite = schedule(L_HOOK, CFG.Q_WRITE, 0, 0.6 * L_HOOK / CFG.Q_WRITE);
+const qBridge = schedule(L_ALL - L_HOOK, CFG.Q_MORPH * .42, qWrite.speedAt(CFG.Q_WRITE));
+const qDrain = schedule(L_ALL, CFG.Q_MORPH, 0, 0.6 * L_ALL / CFG.Q_MORPH);
 // 玻璃珠的滑行路径:三次贝塞尔,从圆点出发向左下掠过,再顺着 h 第一笔的方向切入起笔点,落点处运动方向与书写方向一致
-const H0 = pts[0], tH = [pts[8][0] - H0[0], pts[8][1] - H0[1]], tHl = Math.hypot(tH[0], tH[1]);
+const H0 = pts[0], tH = [pts[1][0] - H0[0], pts[1][1] - H0[1]], tHl = Math.hypot(tH[0], tH[1]);
 const span = Math.hypot(H0[0] - D[0], H0[1] - D[1]);
 const P1 = [D[0] - span * .34, D[1] + span * .06], P2 = [H0[0] - tH[0] / tHl * span * .15, H0[1] - tH[1] / tHl * span * .15];
 const TRV = [[0, D[0], D[1]]];   // 弧长查找表:[累计弧长, x, y]
@@ -249,44 +180,31 @@ function travelAt(s) {   // 滑行路径上弧长 s 处的位置和切线方向
   const a = TRV[lo], b = TRV[hi], r = (s - a[0]) / Math.max(1e-6, b[0] - a[0]), l = Math.hypot(b[1] - a[1], b[2] - a[2]) || 1;
   return [lerp(a[1], b[1], r), lerp(a[2], b[2], r), (b[1] - a[1]) / l, (b[2] - a[2]) / l];
 }
-const V0_NAME = arcAt(.03) / .03;                       // 正文起笔时的笔速:玻璃珠以这个速度落进起笔点,接着就是书写
-const V_TRAVEL_MAX = 1.875 * L_TRAVEL / CFG.Q_TRAVEL;    // 最小加加速度曲线的峰值速度
-// 各段起点(秒,相对开场开始)
-const QT = {}; let qAcc = 0;
-for (const [k, d] of [["write", CFG.Q_WRITE], ["lift", CFG.Q_LIFT], ["dot", CFG.Q_DOT], ["hold", CFG.Q_HOLD],
-  ["morph", CFG.Q_MORPH], ["breath", CFG.Q_BREATH], ["travel", CFG.Q_TRAVEL]]) { QT[k] = qAcc; qAcc += d; }
-const INTRO_DUR = REDUCED ? 0 : qAcc;
-// 开场在第 tq 秒的状态:tail/head = 问号笔画可见的弧长区间,qr = 笔画半径,bead = [x, y, 半径, 拉伸轴 x, y, 拉伸倍数] 或 null,
-// reveal = 书写阶段(着色按写完后的钩笔,头部不显示笔触形状)
+// 滑行末速精确匹配正文起笔速度;两段的切线也一致,交接处不归零。
+const travelMotion = schedule(L_TRAVEL, CFG.Q_TRAVEL, 0, nameMotion.speedAt(0));
+const QT = { write: 0, dot: Math.max(0, CFG.Q_WRITE - CFG.Q_DOT), morph: CFG.Q_WRITE, travel: CFG.Q_WRITE + CFG.Q_MORPH };
+const INTRO_DUR = REDUCED ? 0 : QT.travel + CFG.Q_TRAVEL;
+// qr 与 bead 半径始终为 R_PEN;圆点只淡入,不放大、回弹或拉伸。
 function introState(tq) {
-  const s = { tail: 0, head: 0, qr: R_PEN, bead: null, reveal: false };
-  if (REDUCED || tq < 0) return s;
-  if (tq >= INTRO_DUR) {   // 交接:玻璃珠在起笔点多留 0.06 秒,和正文的起笔圆头重合,不会闪
-    if (tq < INTRO_DUR + .06) s.bead = [H0[0], H0[1], R_PEN, 1, 0, 1];
+  const s = { tail: 0, head: 0, qr: R_PEN, bead: null, beadAlpha: 1, reveal: false };
+  if (REDUCED || tq < 0 || tq >= INTRO_DUR) return s;
+  if (tq < QT.morph) {
+    s.head = qWrite.arcAt(tq); s.reveal = true;
+    if (tq >= QT.dot) {
+      s.bead = [D[0], D[1], R_PEN, 1, 0, 1];
+      s.beadAlpha = sm(Math.min(1, (tq - QT.dot) / CFG.Q_DOT));
+    }
     return s;
   }
-  if (tq < QT.morph) {     // 写问号:钩笔按手写节奏写出,提笔,再点下圆点
-    s.head = Math.min(L_HOOK, qWrite.arcAt(tq)); s.reveal = true;
-    s.qr = R_PEN * (1 - Math.pow(1 - Math.min(1, tq / .18), 3));   // 落笔:笔尖从一个点长到笔宽
-    if (tq >= QT.dot) s.bead = [D[0], D[1], R_PEN * (1 - Math.pow(1 - Math.min(1, (tq - QT.dot) / CFG.Q_DOT), 3)), 1, 0, 1];
+  if (tq < QT.travel) {
+    const t = tq - QT.morph;
+    s.head = L_HOOK + qBridge.arcAt(t);
+    s.tail = Math.min(s.head, qDrain.arcAt(t));
+    s.bead = [D[0], D[1], R_PEN, 1, 0, 1];
     return s;
   }
-  if (tq < QT.breath) {    // 问号顺着自己的笔画流进圆点:头端先沿桥接上圆点,尾端随后按手写节奏一路收进去,圆点吸收后长成玻璃珠
-    const m = (tq - QT.morph) / CFG.Q_MORPH;
-    s.head = lerp(L_HOOK, L_ALL, mj(Math.min(1, m / .42)));
-    s.tail = Math.min(s.head, qDrain.arcAt(Math.max(0, (m - .1) / .9) * qDrain.total));
-    s.bead = [D[0], D[1], R_PEN * Math.sqrt(1 + (CFG.Q_BEAD ** 2 - 1) * sm(s.tail / L_ALL)), 1, 0, 1];   // 半径按吸收的面积长大
-    return s;
-  }
-  const tw = tq - QT.breath;   // 汇成之后的回弹:轻微的阻尼振荡
-  const r = R_PEN * CFG.Q_BEAD * (1 + CFG.Q_WOBBLE * Math.sin(2 * Math.PI * tw / .34) * Math.exp(-tw / .2) * sm(Math.min(1, tw / .06)));
-  if (tq < QT.travel) { s.bead = [D[0], D[1], r, 1, 0, 1]; return s; }
-  // 滑向 h 的起笔点:位移用五次埃尔米特曲线,起点静止、终点速度等于正文起笔速度,一路缩回笔宽
-  const T = CFG.Q_TRAVEL, u = (tq - QT.travel) / T;
-  const h4 = u * u * u * (-4 + u * (7 - 3 * u)), dh5 = 30 * u * u * (1 - u) * (1 - u), dh4 = u * u * (-12 + u * (28 - 15 * u));
-  const p = travelAt(L_TRAVEL * mj(u) + V0_NAME * T * h4), v = (L_TRAVEL * dh5 + V0_NAME * T * dh4) / T;
-  const st = 1 + CFG.Q_STRETCH * Math.min(1, v / V_TRAVEL_MAX) * (1 - sm(Math.max(0, (u - .8) / .2)));
-  s.bead = [p[0], p[1], lerp(r, R_PEN, mj(u)), p[2], p[3], st];
+  const p = travelAt(travelMotion.arcAt(tq - QT.travel));
+  s.bead = [p[0], p[1], R_PEN, 1, 0, 1];
   return s;
 }
 
@@ -368,27 +286,29 @@ const f1 = v => v.toFixed(3);   // JS 数字 → GLSL 浮点字面量
 const VS = `#version 300 es
 in vec2 p; out vec2 vUv; void main() { vUv = p * .5 + .5; gl_Position = vec4(p, 0., 1.); }`;
 // 开场形状(问号笔画 ∪ 玻璃珠)的距离函数,主画面和投影 pass 共用
-const GLSL_INTRO = `uniform sampler2D uQTex; uniform vec4 uQBox, uQEnds, uBead; uniform vec3 uBeadSq, uQHookEnd; uniform float uQTail, uQHead, uQR, uQReveal, uIntroOn;
+const GLSL_INTRO = `uniform sampler2D uQTex; uniform vec4 uQBox, uQEnds, uBead; uniform vec3 uBeadSq, uQHookEnd; uniform float uQTail, uQHead, uQR, uQReveal, uIntroOn, uBeadAlpha;
 vec4 bil4(sampler2D t, vec2 uv) {   // 手动双线性采样(32 位浮点贴图不能线性过滤)
   ivec2 mx = textureSize(t, 0) - 1; vec2 q = uv * vec2(mx + 1) - .5, f = fract(q); ivec2 i = ivec2(floor(q));
   vec4 a = texelFetch(t, clamp(i, ivec2(0), mx), 0), b = texelFetch(t, clamp(i + ivec2(1, 0), ivec2(0), mx), 0);
   vec4 c = texelFetch(t, clamp(i + ivec2(0, 1), ivec2(0), mx), 0), d = texelFetch(t, clamp(i + ivec2(1, 1), ivec2(0), mx), 0);
   return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
 }
-// 返回 (有符号距离, 朝内法线 xy, 倒角半径),字体单位,形状内部为负;sh = 着色用的 (法线 xy, 到边缘的距离)
-vec4 introSD(vec2 f, out vec3 sh) {
+// 返回 (有符号距离, 朝内法线 xy, 倒角半径),字体单位,形状内部为负;sh = 着色用的 (法线 xy, 到边缘的距离, 不透明度)
+vec4 introSD(vec2 f, out vec4 sh) {
   float sdS = 1e5, eS = 0.; vec2 nS = vec2(0.);
   vec2 uv = (f - uQBox.xy) / uQBox.zw;
   if (uQHead > uQTail && all(greaterThan(uv, vec2(0.))) && all(lessThan(uv, vec2(1.)))) {
     vec4 q = bil4(uQTex, uv);
-    vec2 v = q.zw * q.x;                              // 像素 → 最近中心线点
-    if (q.y < uQTail) v = uQEnds.xy - f;              // 最近点不在可见段内:量到端点,两端都是圆头
-    else if (q.y > uQHead) v = uQEnds.zw - f;
-    float l = length(v); sdS = l - uQR; nS = l > 1e-3 ? v / l : vec2(0.); eS = -sdS;
+    // 距离直接取标量通道;插值法线可能相互抵消,其长度不能用来判断笔画轮廓。
+    vec2 v = q.zw; float l = q.x;
+    if (q.y < uQTail) { v = uQEnds.xy - f; l = length(v); }
+    else if (q.y > uQHead) { v = uQEnds.zw - f; l = length(v); }
+    float vl = length(v); sdS = l - uQR; nS = vl > 1e-3 ? v / vl : vec2(0.); eS = -sdS;
     // 书写阶段:着色按写完后的钩笔(到钩笔末端为止),写到哪里就揭开到哪里,头部不带圆头高光,和正文一致
     if (uQReveal > .5) {
-      vec2 w = q.y > uQHookEnd.z ? uQHookEnd.xy - f : q.zw * q.x; float lw = length(w);
-      nS = lw > 1e-3 ? w / lw : vec2(0.); eS = uQR - lw;
+      vec2 w = q.zw; float lw = q.x;
+      if (q.y > uQHookEnd.z) { w = uQHookEnd.xy - f; lw = length(w); }
+      float wl = length(w); nS = wl > 1e-3 ? w / wl : vec2(0.); eS = uQR - lw;
     }
   }
   float sdB = 1e5; vec2 nB = vec2(0.);
@@ -399,10 +319,10 @@ vec4 introSD(vec2 f, out vec3 sh) {
     if (k1 > 1e-6) { sdB = k0 * (k0 - 1.) / k1; nB = -normalize(g.x * ax + g.y * ay); } else sdB = -min(ab.x, ab.y);
   }
   // 多项式 smooth-min:笔画和玻璃珠靠近时像液体一样拉出液桥、连成一体
-  float k = uBead.w, h = clamp(.5 + .5 * (sdB - sdS) / k, 0., 1.);
+  float k = uBead.w, h = k > 0. ? clamp(.5 + .5 * (sdB - sdS) / k, 0., 1.) : step(sdS, sdB);
   vec2 n = mix(nB, nS, h); float ln = length(n);
   float sd = mix(sdB, sdS, h) - k * h * (1. - h);
-  sh = vec3(ln > 1e-4 ? n / ln : vec2(0.), -sd + h * (eS + sdS));
+  sh = vec4(ln > 1e-4 ? n / ln : vec2(0.), -sd + h * (eS + sdS), mix(uBeadAlpha, 1., h));
   return vec4(sd, sh.xy, mix(uBead.z, uQR, h));
 }`;
 // pass 1:已写部分的覆盖率(正文 + 开场形状,带边距)
@@ -415,9 +335,11 @@ void main() {
   vec2 tx = vUv * (uTex + 2. * uPad) - uPad, uv = tx / uTex, fnt = vec2(${f1(bx)}, ${f1(by)}) + tx * ${f1(U)};
   float c = 0.;
   if (all(greaterThan(uv, vec2(0.))) && all(lessThan(uv, vec2(1.))))
-    c = texture(uField, uv).a * clamp((uArc - bil4(uArr, uv).x) / uAA + .5, 0., 1.);
-  vec3 sh;
-  if (uIntroOn > .5) c = max(c, clamp(.5 - introSD(fnt, sh).x / ${f1(U * SH_DOWN)}, 0., 1.));
+    c = texture(uField, uv).a * clamp((uArc - bil4(uArr, uv).x) / uAA + 1., 0., 1.);
+  if (uIntroOn > .5) {
+    vec4 sh; float sd = introSD(fnt, sh).x;
+    c = max(c, clamp(.5 - sd / ${f1(U * SH_DOWN)}, 0., 1.) * sh.w);
+  }
   o = vec4(c, 0., 0., 1.);
 }`;
 // pass 2/3:一维高斯,横一遍竖一遍
@@ -471,7 +393,7 @@ vec3 glass(vec2 px, vec2 n, float u, float e) {
   float x = clamp(u, .001, .999), k = 1. - x, s4 = 1. - k*k*k*k;
   float t1 = atan(k*k*k * pow(s4, -.75)), t2 = asin(sin(t1) / ${f1(CFG.IOR)});
   vec2 d = n * pow(s4, .25) * uB * tan(t1 - t2) * uDisp;
-  vec3 g = vec3(bg(px + d * .85).r, bg(px + d).g, bg(px + d * 1.15).b);   // 轻微色散
+  vec3 g = vec3(bg(px + d * ${f1(1 - CFG.DISPERSION)}).r, bg(px + d).g, bg(px + d * ${f1(1 + CFG.DISPERSION)}).b);   // 可调色散
   g = clamp(mix(vec3(dot(g, vec3(.2126, .7152, .0722))), g, 1.3), 0., 1.);
   g = mix(g, vec3(1.), uLift);                                            // 字面提亮
   float r = min(1., e / ${f1(0.3 * R_PEN)}), rim = 1. - r * r * (3. - 2. * r);   // 边缘一圈定宽的高光带
@@ -488,7 +410,8 @@ void main() {
   vec2 uv = (px - uBox.xy) / uBox.zw;
   if (all(greaterThan(uv, vec2(0.))) && all(lessThan(uv, vec2(1.)))) {
     vec4 f = texture(uField, uv);
-    float reveal = clamp((uArc - bil4(uArr, uv).x) / uAA + .5, 0., 1.);   // 笔尖已经过这里才显示(边缘按 uAA 宽度柔化)
+    // 起点(到达弧长为 0)完整接管玻璃珠;软边只向前延伸,无需叠画停在原地的圆头。
+    float reveal = clamp((uArc - bil4(uArr, uv).x) / uAA + 1., 0., 1.);
     if (f.a > .003 && reveal > 0.) {
       vec2 n = f.rg * 2. - 1.; float ln = length(n); n = ln > .02 ? n / ln : vec2(0.);
       // 着色始终按写完后的整条笔画,笔尖处不另画圆头和高光,书写时看不到笔触的形状
@@ -496,8 +419,8 @@ void main() {
     }
   }
   if (uIntroOn > .5) {
-    vec3 sh; vec4 s = introSD(fnt, sh);
-    float cov = clamp(.5 - s.x / uK, 0., 1.);
+    vec4 sh; vec4 s = introSD(fnt, sh);
+    float cov = clamp(.5 - s.x / uK, 0., 1.) * sh.w;
     if (cov > 0.) col = mix(col, glass(px, sh.xy, clamp(sh.z / s.w, 0., 1.), sh.z), cov);
   }
   o = vec4(col, 1.);
@@ -552,13 +475,16 @@ if (gl) try {
 // 每帧的书写进度和开场状态,两个程序都要设
 function setFrame(arc, st) {
   const tP = posAt(QPL, st.tail), hP = posAt(QPL, st.head), b = st.bead || [0, 0, 0, 1, 0, 1];
+  // 尾段归入圆点时同步消退液桥,避免同心圆 smooth-min 额外膨胀后突然缩回。
+  const merge = R_PEN * CFG.Q_MERGE * sm(Math.min(1, Math.max(0, st.head - st.tail) / (4 * R_PEN)));
   for (const [p, u] of [[progMask, uM], [prog, uni]]) {
     gl.useProgram(p);
     set(u, "uArc", "uniform1f", arc); set(u, "uIntroOn", "uniform1f", st.head > st.tail || st.bead ? 1 : 0);
+    set(u, "uBeadAlpha", "uniform1f", st.beadAlpha);
     set(u, "uQTail", "uniform1f", st.tail); set(u, "uQHead", "uniform1f", st.head); set(u, "uQR", "uniform1f", st.qr);
     set(u, "uQEnds", "uniform4f", tP[0], tP[1], hP[0], hP[1]); set(u, "uQReveal", "uniform1f", st.reveal ? 1 : 0);
     set(u, "uQHookEnd", "uniform3f", QHOOK_END[0], QHOOK_END[1], L_HOOK);
-    set(u, "uBead", "uniform4f", b[0], b[1], b[2], R_PEN * CFG.Q_MERGE); set(u, "uBeadSq", "uniform3f", b[3], b[4], b[5]);
+    set(u, "uBead", "uniform4f", b[0], b[1], b[2], merge); set(u, "uBeadSq", "uniform3f", b[3], b[4], b[5]);
   }
 }
 // 画一帧:投影三个 pass → 主画面
@@ -587,7 +513,7 @@ function layout() {
   gl.uniform2f(uni.uOrg, boxX * dpr - bx * sc, boxY * dpr - by * sc); gl.uniform1f(uni.uK, 1 / sc);
   gl.uniform4f(uni.uBox, boxX * dpr, boxY * dpr, boxW * dpr, boxH * dpr);
   const tp = boxW * dpr / Wm, aa = Math.max(1, Wm / (boxW * dpr)) * 1.5 * U;   // tp:一个贴图像素对应多少画布像素;aa:显露边缘抗锯齿宽度(字体单位)
-  gl.uniform4f(uni.uShBox, boxX * dpr - SH_PAD * tp, (boxY + CFG.SHADOW_DY) * dpr - SH_PAD * tp, (Wm + 2 * SH_PAD) * tp, (Hm + 2 * SH_PAD) * tp);
+  gl.uniform4f(uni.uShBox, boxX * dpr - SH_PAD * tp, (boxY + CFG.SHADOW_DY * boxW / CFG.MAX_W) * dpr - SH_PAD * tp, (Wm + 2 * SH_PAD) * tp, (Hm + 2 * SH_PAD) * tp);
   gl.uniform1f(uni.uDisp, U * sc * CFG.REFRACT);
   gl.uniform1f(uni.uAA, aa);
   gl.useProgram(progMask); gl.uniform1f(uM.uAA, aa); gl.useProgram(prog);
@@ -625,7 +551,7 @@ function buildFallback() {
     const mkPath = d => { const p = document.createElementNS(NS, "path"); if (d) p.setAttribute("d", d); g.append(p); return p; };
     DATA.paths.forEach((d, k) => {
       const p = mkPath(d);
-      p.style.strokeWidth = cls === "rim" ? DATA.width * 1.1 : DATA.width;
+      p.style.strokeWidth = 2 * R_PEN * (cls === "rim" ? 1.1 : 1);
       p.style.strokeDasharray = `${pathLen[k]} ${pathLen[k] + 1}`; fbPaths.push({ p, k });
     });
     // 开场问号:钩笔 + 桥连成一条路径,用 dasharray 只显示 [tail, head] 一段;玻璃珠是一段零长度的圆头路径
@@ -641,7 +567,8 @@ function buildFallback() {
 }
 function drawFallback(arc, st) {
   for (const { p, k } of fbPaths) {
-    const l = Math.min(pathLen[k], Math.max(0, arc - pathStart[k]));
+    // 零弧长交接也画首笔圆帽;极短线段避免浏览器把零长度 dash 完全隐藏。
+    const l = Math.min(pathLen[k], Math.max(k === 0 && arc >= 0 ? .01 : 0, arc - pathStart[k]));
     p.style.strokeDashoffset = pathLen[k] - l; p.style.visibility = l > 0 ? "visible" : "hidden";
   }
   const k = fbSnakeLen / L_ALL, len = (st.head - st.tail) * k;
@@ -653,6 +580,7 @@ function drawFallback(arc, st) {
   fbBead.forEach((p, i) => {
     p.style.visibility = st.bead ? "visible" : "hidden";
     if (!st.bead) return;
+    p.style.opacity = st.beadAlpha;
     p.setAttribute("d", `M${st.bead[0]} ${st.bead[1]}h.01`); p.style.strokeWidth = 2 * st.bead[2] * (i === 1 ? 1.1 : 1);
   });
 }
@@ -662,7 +590,7 @@ layout(); addEventListener("resize", () => { layout(); if (glOK && REDUCED) requ
 const T_FREEZE = Q.get("t") !== null ? +Q.get("t") : null;     // 定格在正文书写的某个比例(开场视为已结束)
 const AT = Q.get("at") !== null ? +Q.get("at") : null;          // 定格在整条时间线(从加载算起)的第几秒
 const TH_PREVIEW = Q.get("th") !== null ? +Q.get("th") : null;  // 预览写完若干秒后的配色状态
-const introStart = CFG.LOAD_DELAY + CFG.HOVER, nameStart = introStart + INTRO_DUR;
+const introStart = CFG.LOAD_DELAY, nameStart = introStart + INTRO_DUR;
 const t0 = performance.now();
 if (glOK) applyTheme(themeState(0)); else buildFallback();
 function frame(now) {
@@ -682,9 +610,9 @@ function frame(now) {
   if (!REDUCED && (glOK || (!frozen && el < nameStart + WRITE_TOTAL + .5))) requestAnimationFrame(frame);   // 背景一直流动;降级版写完就停;减弱动态时只画一帧
 }
 requestAnimationFrame(frame);
-// 调试信息:控制台可查看时间表统计
-window.__hero = { WRITE_TOTAL, INTRO_DUR, introStart, nameStart, QT, L_HOOK, L_ALL, L_TRAVEL, QOFF, D, cusps: cusps.length,
-  letterBreaks: cusps.filter(c => c.letter).length, qCusps: [qWrite.cusps.length, qDrain.cusps.length], glOK, Wm, Hm, QW, QH, arcAt, introState };
+// 调试信息:控制台可检查位移、速度、统一笔宽和开场状态。
+window.__hero = { WRITE_TOTAL, INTRO_DUR, introStart, nameStart, QT, L_HOOK, L_ALL, L_TRAVEL, QOFF, D,
+  glOK, Wm, Hm, QW, QH, strokeWidth: 2 * R_PEN, arcAt, speedAt: nameMotion.speedAt, introState, travelMotion };
 
 </script>
 </body>
